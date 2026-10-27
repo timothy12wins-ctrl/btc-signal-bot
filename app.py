@@ -44,20 +44,51 @@ def main():
         history['candle_time_utc'] = pd.to_datetime(history['candle_time_utc'], utc=True)
         history = history.sort_values('candle_time_utc')
         last = history.iloc[-1]
-        resolved = history[history['status'] == 'RESOLVED']
-        active = resolved[resolved['signal'].isin(['UP','DOWN'])]
-        correct = active['correct'].astype(str).str.lower().eq('true')
-        a,b,c,d = st.columns(4)
-        a.metric('Last recorded signal', last['signal'])
+        resolved = history[history['status'].astype(str).str.upper().eq('RESOLVED')].copy()
+        active = resolved[resolved['signal'].astype(str).str.upper().isin(['UP', 'DOWN'])].copy()
+        # Explicitly accept only verified boolean outcomes; exclude blanks/unknowns.
+        active['outcome'] = active['correct'].astype(str).str.strip().str.lower()
+        active = active[active['outcome'].isin(['true', 'false'])].copy()
+        active['win'] = active['outcome'].eq('true').astype(int)
+        wins = int(active['win'].sum())
+        losses = len(active) - wins
+        accuracy = wins / len(active) if len(active) else None
+        a, b, c, d = st.columns(4)
+        a.metric('Last recorded signal', str(last['signal']))
         b.metric('Model P(UP)', f"{float(last['p_up']):.1%}")
-        c.metric('Forward signal accuracy', f'{correct.mean():.1%}' if len(active) else 'Not yet available')
-        d.metric('Resolved UP/DOWN signals', len(active))
+        c.metric('Forward signal accuracy', f'{accuracy:.1%}' if accuracy is not None else 'Not yet available')
+        d.metric('Scored UP/DOWN signals', len(active))
         st.caption(f"Prediction based on completed candle: {last['candle_time_utc']:%Y-%m-%d %H:%M} UTC. Latest status: {last['status']}. Signals are only logged when the scheduled job runs.")
+
+        st.subheader('Forward signal scorecard')
+        w, l, r, pending = st.columns(4)
+        w.metric('Wins (correct direction)', wins)
+        l.metric('Losses (incorrect direction)', losses)
+        recent = active.tail(20)
+        r.metric('Last 20 scored accuracy', f"{recent['win'].mean():.1%}" if len(recent) else 'N/A',
+                 help='Uses up to 20 most recent scored UP/DOWN predictions; not necessarily 20 consecutive candles.')
+        pending.metric('Pending signals', int(history['status'].astype(str).str.upper().eq('PENDING').sum()))
+        if len(active):
+            breakdown = active.groupby('signal')['win'].agg(['count', 'sum']).reindex(['UP', 'DOWN']).fillna(0)
+            breakdown['losses'] = breakdown['count'] - breakdown['sum']
+            breakdown['accuracy'] = breakdown.apply(lambda x: x['sum'] / x['count'] if x['count'] else float('nan'), axis=1)
+            breakdown = breakdown.rename(columns={'count': 'Signals', 'sum': 'Wins', 'losses': 'Losses', 'accuracy': 'Accuracy'})
+            st.write('**UP versus DOWN results**')
+            st.dataframe(breakdown, use_container_width=True, column_config={'Accuracy': st.column_config.NumberColumn(format='%.1f%%')})
+            # Each record corresponds to one completed, previously recorded signal.
+            chart = active[['candle_time_utc', 'win']].copy()
+            chart['cumulative_accuracy'] = chart['win'].expanding().mean() * 100
+            chart['rolling_20_accuracy'] = chart['win'].rolling(20, min_periods=1).mean() * 100
+            chart = chart.set_index('candle_time_utc')[['cumulative_accuracy', 'rolling_20_accuracy']]
+            st.write('**Accuracy trend (% of scored signals)**')
+            st.line_chart(chart, y_label='Accuracy (%)')
+            st.caption('Rolling accuracy uses up to 20 scored signals. NO TRADE, pending and unknown outcomes are excluded. This measures direction accuracy, not trade returns.')
+        else:
+            st.info('No scored UP/DOWN predictions yet. As future candles close and scheduled jobs resolve signals, accuracy will appear automatically.')
         st.subheader('Persistent forward paper predictions')
         st.dataframe(history.sort_values('candle_time_utc', ascending=False), use_container_width=True, hide_index=True)
         st.download_button('Download full prediction history CSV', history.to_csv(index=False), file_name='btc_paper_history.csv', mime='text/csv')
-        if len(active):
-            st.caption('Forward accuracy = correct resolved UP/DOWN signals / all resolved UP/DOWN signals. NO TRADE excluded. No execution costs or P&L calculated.')
+        st.caption('Accuracy = correct resolved UP/DOWN signals / all scored resolved UP/DOWN signals. NO TRADE excluded. No execution costs or P&L calculated.')
     else:
         st.warning('No scheduled predictions recorded yet. Run the GitHub Actions workflow manually once to start the history.')
     fig = go.Figure(data=[go.Candlestick(x=candles.index[-150:], open=candles.open[-150:], high=candles.high[-150:], low=candles.low[-150:], close=candles.close[-150:])])
