@@ -1,0 +1,33 @@
+name: Record BTC 15-minute paper signals
+on:
+  schedule:
+    - cron: '3,18,33,48 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: btc-prediction-history
+  cancel-in-progress: false
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python runner.py
+      - name: Commit prediction history if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/predictions.csv
+          if ! git diff --cached --quiet; then
+            git commit -m "Record paper BTC prediction"
+            git push
+          fi
