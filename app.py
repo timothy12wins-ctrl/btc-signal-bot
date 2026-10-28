@@ -74,7 +74,7 @@ def main():
             breakdown['accuracy'] = breakdown.apply(lambda x: x['sum'] / x['count'] if x['count'] else float('nan'), axis=1)
             breakdown = breakdown.rename(columns={'count': 'Signals', 'sum': 'Wins', 'losses': 'Losses', 'accuracy': 'Accuracy'})
             st.write('**UP versus DOWN results**')
-            st.dataframe(breakdown, use_container_width=True, column_config={'Accuracy': st.column_config.NumberColumn(format='%.1f%%')})
+           st.dataframe(breakdown, use_container_width=True, column_config={'Accuracy': st.column_config.NumberColumn(format='percent')})
             # Each record corresponds to one completed, previously recorded signal.
             chart = active[['candle_time_utc', 'win']].copy()
             chart['cumulative_accuracy'] = chart['win'].expanding().mean() * 100
